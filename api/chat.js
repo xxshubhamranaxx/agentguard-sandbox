@@ -5,7 +5,7 @@ export default async function handler(req, res) {
 
   const { prompt, mode } = req.body;
   const SECRET_FLAG = "FLAG{H4CK3R_SHUBH4M_LLM_PWN3D_2026}";
-  const GROQ_API_KEY = process.env.GROQ_API_KEY;
+  const GROQ_API_KEY = process.env.GROQ_API_KEY?.trim();
 
   if (!GROQ_API_KEY) {
     return res.status(500).json({ error: "GROQ_API_KEY missing in environment variables." });
@@ -47,14 +47,45 @@ export default async function handler(req, res) {
     : prompt;
 
   try {
+    // Auto-discover currently active Llama/Qwen/Gemma chat model on Groq
+    const modelsRes = await fetch("https://api.groq.com/openai/v1/models", {
+      headers: { "Authorization": `Bearer ${GROQ_API_KEY}` }
+    });
+    const modelsData = await modelsRes.json();
+
+    if (!modelsRes.ok) {
+      return res.status(200).json({
+        reply: "❌ Groq API Key Error: " + (modelsData.error?.message || JSON.stringify(modelsData)),
+        status: "blocked",
+        layer: "API Auth Error"
+      });
+    }
+
+    const availableModels = (modelsData.data || [])
+      .map(m => m.id)
+      .filter(id => !id.includes('whisper') && !id.includes('guard') && !id.includes('tts'));
+
+    const selectedModel =
+      availableModels.find(id => id.includes('llama') && id.includes('70b')) ||
+      availableModels.find(id => id.includes('llama')) ||
+      availableModels[0];
+
+    if (!selectedModel) {
+      return res.status(200).json({
+        reply: "❌ No active chat models found on your Groq account.",
+        status: "blocked",
+        layer: "Model Error"
+      });
+    }
+
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${GROQ_API_KEY.trim()}`,
+        "Authorization": `Bearer ${GROQ_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model: selectedModel,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: formattedUserMessage }
@@ -64,10 +95,10 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
-    
+
     if (!response.ok) {
       return res.status(200).json({
-        reply: "❌ Groq API Error: " + (data.error?.message || JSON.stringify(data)),
+        reply: `❌ Groq API Error (${selectedModel}): ` + (data.error?.message || JSON.stringify(data)),
         status: "blocked",
         layer: "API Error"
       });
@@ -88,7 +119,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       reply: aiReply,
       status: flagCaptured ? "pwned" : "safe",
-      layer: flagCaptured ? "Defense Bypassed!" : "Passed"
+      layer: flagCaptured ? `Defense Bypassed! (${selectedModel})` : `Passed (${selectedModel})`
     });
 
   } catch (err) {
