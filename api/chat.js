@@ -47,7 +47,6 @@ export default async function handler(req, res) {
     : prompt;
 
   try {
-    // Auto-discover currently active Llama/Qwen/Gemma chat model on Groq
     const modelsRes = await fetch("https://api.groq.com/openai/v1/models", {
       headers: { "Authorization": `Bearer ${GROQ_API_KEY}` }
     });
@@ -61,18 +60,22 @@ export default async function handler(req, res) {
       });
     }
 
+    // Filter strictly for standard text-generation LLMs (exclude audio, guard, and terms-gated models)
+    const blockedKeywords = ['whisper', 'guard', 'tts', 'orpheus', 'canopylabs', 'playai', 'distil', 'vision', 'compound'];
     const availableModels = (modelsData.data || [])
       .map(m => m.id)
-      .filter(id => !id.includes('whisper') && !id.includes('guard') && !id.includes('tts'));
+      .filter(id => !blockedKeywords.some(word => id.toLowerCase().includes(word)));
 
     const selectedModel =
+      availableModels.find(id => id.includes('llama-3.1-8b')) ||
       availableModels.find(id => id.includes('llama') && id.includes('70b')) ||
       availableModels.find(id => id.includes('llama')) ||
+      availableModels.find(id => id.includes('qwen') || id.includes('gemma') || id.includes('mixtral')) ||
       availableModels[0];
 
     if (!selectedModel) {
       return res.status(200).json({
-        reply: "❌ No active chat models found on your Groq account.",
+        reply: "❌ No compatible chat models found. Raw list: " + (modelsData.data || []).map(m => m.id).join(', '),
         status: "blocked",
         layer: "Model Error"
       });
