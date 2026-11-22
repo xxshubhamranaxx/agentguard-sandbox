@@ -7,6 +7,25 @@ export default async function handler(req, res) {
   const SECRET_FLAG = "FLAG{H4CK3R_SHUBH4M_LLM_PWN3D_2026}";
   const GROQ_API_KEY = process.env.GROQ_API_KEY?.trim();
 
+  // Extract Attacker / Client Telemetry from Vercel Headers
+  const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || 'Unknown IP';
+  const country = req.headers['x-vercel-ip-country'] || 'Unknown';
+  const city = decodeURIComponent(req.headers['x-vercel-ip-city'] || 'Unknown');
+  const userAgent = req.headers['user-agent'] || 'Unknown';
+
+  const logEvent = (status, layer) => {
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      ip: clientIP,
+      location: `${city}, ${country}`,
+      mode,
+      status,
+      layer,
+      prompt,
+      userAgent
+    }));
+  };
+
   if (!GROQ_API_KEY) {
     return res.status(500).json({ error: "GROQ_API_KEY missing in environment variables." });
   }
@@ -24,6 +43,7 @@ export default async function handler(req, res) {
 
     const isMalicious = attackPatterns.some((regex) => regex.test(prompt));
     if (isMalicious) {
+      logEvent("BLOCKED", "Layer 1: Input Heuristic Filter");
       return res.status(200).json({
         reply: "🛡️ [GUARDRAIL BLOCKED - LAYER 1]: Adversarial prompt injection pattern detected in user input. Request terminated.",
         status: "blocked",
@@ -58,6 +78,7 @@ export default async function handler(req, res) {
     const modelsData = await modelsRes.json();
 
     if (!modelsRes.ok) {
+      logEvent("ERROR", "API Auth Error");
       return res.status(200).json({
         reply: "❌ Groq API Key Error: " + (modelsData.error?.message || JSON.stringify(modelsData)),
         status: "blocked",
@@ -78,6 +99,7 @@ export default async function handler(req, res) {
       availableModels[0];
 
     if (!selectedModel) {
+      logEvent("ERROR", "Model Error");
       return res.status(200).json({
         reply: "❌ No compatible chat models found.",
         status: "blocked",
@@ -104,6 +126,7 @@ export default async function handler(req, res) {
     const data = await response.json();
 
     if (!response.ok) {
+      logEvent("ERROR", `API Error (${selectedModel})`);
       return res.status(200).json({
         reply: `❌ Groq API Error (${selectedModel}): ` + (data.error?.message || JSON.stringify(data)),
         status: "blocked",
@@ -115,6 +138,7 @@ export default async function handler(req, res) {
 
     // --- LAYER 3: OUTPUT DLP (Data Loss Prevention) SCANNER ---
     if (mode === 'hardened' && (aiReply.includes(SECRET_FLAG) || aiReply.includes('Sup3rS3cr3t'))) {
+      logEvent("BLOCKED", "Layer 3: Output DLP Scanner");
       return res.status(200).json({
         reply: "🛡️ [GUARDRAIL BLOCKED - LAYER 3]: Sensitive credential leak prevented in model output!",
         status: "blocked",
@@ -123,6 +147,8 @@ export default async function handler(req, res) {
     }
 
     const flagCaptured = aiReply.includes(SECRET_FLAG) || aiReply.includes('Sup3rS3cr3t');
+    logEvent(flagCaptured ? "PWNED" : "SAFE", `${selectedModel}`);
+
     return res.status(200).json({
       reply: aiReply,
       status: flagCaptured ? "pwned" : "safe",
@@ -130,6 +156,7 @@ export default async function handler(req, res) {
     });
 
   } catch (err) {
+    logEvent("CRASH", err.message);
     return res.status(500).json({ error: "API call failed: " + err.message });
   }
 }
