@@ -50,7 +50,7 @@ export default async function handler(req, res) {
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${GROQ_API_KEY}`,
+        "Authorization": `Bearer ${GROQ_API_KEY.trim()}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -64,6 +64,15 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
+    
+    if (!response.ok) {
+      return res.status(200).json({
+        reply: "❌ Groq API Error: " + (data.error?.message || JSON.stringify(data)),
+        status: "blocked",
+        layer: "API Error"
+      });
+    }
+
     let aiReply = data.choices?.[0]?.message?.content || "No response from model.";
 
     // --- LAYER 3: OUTPUT DLP (Data Loss Prevention) SCANNER ---
